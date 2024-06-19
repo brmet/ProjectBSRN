@@ -31,19 +31,24 @@ def read_words_from_file(file_path):
 
 
 def create_bingo_card(words, size):
-    return [random.sample(words, size) for _ in range(size)]
+    unique_words = random.sample(words, size * size)
+    return [unique_words[i * size:(i + 1) * size] for i in range(size)]
 
 
-def display_bingo_card(window, card, start_y, start_x, size):
+def display_bingo_card(window, card, start_y, start_x, size, cursor_y=None, cursor_x=None):
     for i in range(size):
         for j in range(size):
             word = card[i][j]
             if len(word) > CELL_WIDTH - 1:
                 word = word[:CELL_WIDTH - 2] + '…'  # Truncate and add ellipsis
-            window.addstr(start_y + i * 2, start_x + j * CELL_WIDTH, f"| {word:<{CELL_WIDTH - 1}}",
-                          curses.color_pair(2))
+            if cursor_y == i and cursor_x == j:
+                window.addstr(start_y + i * 2, start_x + j * CELL_WIDTH, f"| {word:<{CELL_WIDTH - 1}}",
+                              curses.color_pair(3))
+            else:
+                window.addstr(start_y + i * 2, start_x + j * CELL_WIDTH, f"| {word:<{CELL_WIDTH - 1}}",
+                              curses.color_pair(2))
         window.addstr(start_y + i * 2, start_x + size * CELL_WIDTH, "|")
-    window.addstr(start_y + size * 2, start_x, "+" + "-" * (CELL_WIDTH * size + size - 1) + "+",curses.color_pair(5))
+    window.addstr(start_y + size * 2, start_x, "+" + "-" * (CELL_WIDTH * size + size - 1) + "+", curses.color_pair(5))
     window.refresh()
 
 
@@ -54,10 +59,8 @@ def check_word_on_card(card, word):
     return False
 
 
-def mark_word_on_card(card, word):
-    for row in card:
-        if word in row:
-            row[row.index(word)] = "X"
+def mark_word_on_card(card, y, x):
+    card[y][x] = "X"
 
 
 def check_winner(card, size):
@@ -83,8 +86,9 @@ def player_process(player_id, num_players, card_size, words, player_name, server
     def main(stdscr):
         curses.start_color()
         curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Highlight color
         curses.init_pair(4, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Initialize color pair 4 for green text
-        curses.init_pair(5,curses.COLOR_RED,curses.COLOR_BLACK)
+        curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
 
         card = create_bingo_card(words, card_size)
         window = stdscr
@@ -95,40 +99,55 @@ def player_process(player_id, num_players, card_size, words, player_name, server
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
                 s.connect((server_ip, server_port))
+                s.setblocking(False)
             except ConnectionRefusedError:
                 print(f"Unable to connect to server at {server_ip}:{server_port}")
                 sys.exit(1)
 
+            cursor_y, cursor_x = 0, 0
+
+            window.timeout(100)  # Set the timeout to 100 milliseconds
+
             while True:
-                drawn_word = s.recv(1024).decode('utf-8')
-                if not drawn_word:
-                    break
-
-                window.clear()
-                window.addstr(0, 0, f"Das gezogene Wort lautet: {drawn_word}", curses.color_pair(1))
-                display_bingo_card(window, card, 2, 0, card_size)
-
-                player_input = get_input(window,
-                                         f"{player_name}, haben Sie das Wort '{drawn_word}' auf Ihrer Karte? (j/n): ",
-                                         card_size * 2 + 3)
-                s.sendall(player_input.encode('utf-8'))
-
-                if player_input.lower() == 'j' and check_word_on_card(card, drawn_word):
-                    mark_word_on_card(card, drawn_word)
-                    pygame.mixer.Sound.play(achievement_sound)
-                    window.clear()
-                    window.addstr(0, 0, f"{player_name} hat das Wort {drawn_word} auf der Karte!", curses.color_pair(1))
-                    display_bingo_card(window, card, 2, 0, card_size)
-                    window.refresh()
-                    time.sleep(2)
-                    s.sendall(b'SCORED')
-                    if check_winner(card, card_size):
-                        s.sendall(b'WIN')
-                        pygame.mixer.Sound.play(winning_sound)
+                try:
+                    drawn_word = s.recv(1024).decode('utf-8')
+                    if drawn_word == 'WIN':
                         window.addstr(card_size * 2 + 5, 0, f"{player_name} hat gewonnen!", curses.color_pair(1))
                         window.refresh()
+                        pygame.mixer.Sound.play(winning_sound)
                         time.sleep(5)
                         return
+                    window.clear()
+                    window.addstr(0, 0, f"{player_name}'s Karte: ", curses.color_pair(4))
+                    display_bingo_card(window, card, 2, 0, card_size, cursor_y, cursor_x)
+                    # Position the question below the Bingo card
+                    question_y = 2 + card_size * 2 + 1
+                    window.addstr(question_y, 0, f"Haben Sie das Wort {drawn_word} auf der Karte?", curses.color_pair(1))
+                except BlockingIOError:
+                    pass
+
+                key = window.getch()
+                if key == curses.KEY_UP and cursor_y > 0:
+                    cursor_y -= 1
+                elif key == curses.KEY_DOWN and cursor_y < card_size - 1:
+                    cursor_y += 1
+                elif key == curses.KEY_LEFT and cursor_x > 0:
+                    cursor_x -= 1
+                elif key == curses.KEY_RIGHT and cursor_x < card_size - 1:
+                    cursor_x += 1
+                elif key == ord('\n'):
+                    if check_word_on_card(card, drawn_word) and card[cursor_y][cursor_x] == drawn_word:
+                        mark_word_on_card(card, cursor_y, cursor_x)
+                        pygame.mixer.Sound.play(achievement_sound)
+                        s.sendall(b'SCORED')
+                        if check_winner(card, card_size):
+                            s.sendall(b'WIN')
+                            pygame.mixer.Sound.play(winning_sound)
+                            window.addstr(card_size * 2 + 5, 0, f"{player_name} hat gewonnen!", curses.color_pair(1))
+                            window.refresh()
+                            time.sleep(5)
+                            return
+                display_bingo_card(window, card, 2, 0, card_size, cursor_y, cursor_x)
 
     curses.wrapper(main)
 
@@ -139,22 +158,21 @@ def handle_player_connection(conn, addr, shared_state, num_players, lock, player
         with lock:
             drawn_word = shared_state['drawn_word']
         conn.sendall(drawn_word.encode('utf-8'))
-        player_response = conn.recv(1024).decode('utf-8')
+        try:
+            player_response = conn.recv(1024).decode('utf-8')
+        except ConnectionResetError:
+            break
+
         if not player_response:
             break
 
         with lock:
-            if player_response.lower() == 'j':
-                shared_state['scores'][player_id] += 1
             if player_response == 'SCORED':
                 shared_state['scores'][player_id] += 1
-            shared_state[f"player_{player_id}_marked"] = True
-
-        if player_response == 'WIN':
-            with lock:
+                shared_state[f"player_{player_id}_marked"] = True
+            if player_response == 'WIN':
                 shared_state['winner'] = player_id + 1
-            break
-
+                break
 
 def master_process(num_players, words, shared_state, server_ip, server_port, lock, player_names):
     def main(stdscr):
@@ -167,11 +185,11 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
         window.clear()
         window.addstr(0, 0, "Master Terminal: Buzzword Bingo Game")
 
-        # Create a new window for the countdown timer in the top-right corner
         max_y, max_x = stdscr.getmaxyx()
         timer_window = curses.newwin(3, 30, 0, max_x - 30)
 
         round_count = 0
+        drawn_words = set()
 
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -181,82 +199,68 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
 
                 while not shared_state['winner']:
                     round_count += 1
-                    drawn_word = random.choice(words)
+                    drawn_word = random.choice([w for w in words if w not in drawn_words])
+                    drawn_words.add(drawn_word)
+
                     with lock:
                         shared_state['drawn_word'] = drawn_word
 
                     window.clear()
-                    window.addstr(0, 0, f"Runde {round_count}: Das gezogene Wort lautet: {drawn_word}",
-                                  curses.color_pair(1))
+                    window.addstr(0, 0, f"Runde {round_count}: Das gezogene Wort lautet: {drawn_word}", curses.color_pair(1))
 
-                    # Display the scores
-                    window.addstr(2, 0, "Aktueller Punktestand:")
+                    window.addstr(2, 0, "Anzahl der gefundenen Wörter:")
                     for i in range(num_players):
-                        window.addstr(3 + i, 0, f"{player_names[i]}: {shared_state['scores'][i]} Punkte",
-                                      curses.color_pair(1))
-
+                        window.addstr(3 + i, 0, f"{player_names[i]}: {shared_state['scores'][i]} Punkte", curses.color_pair(1))
                     window.refresh()
 
-                    # Send the drawn word to all players
                     for conn in connections:
-                        try:
-                            conn.sendall(drawn_word.encode('utf-8'))
-                        except ConnectionResetError:
-                            window.addstr(1, 0, f"Verbindung zum Spieler verloren. Runde wird abgebrochen.",
-                                          curses.color_pair(3))
-                            window.refresh()
-                            time.sleep(2)
-                            return
+                        conn.sendall(drawn_word.encode('utf-8'))
 
-                    # Countdown Timer
-                    countdown_seconds = 30
                     start_time = time.time()
-                    play_countdown_sound = True  # Variable, um zu verfolgen, ob der Countdown-Sound abgespielt werden soll
+                    countdown_seconds = 30
+                    play_countdown_sound = True
 
                     while True:
                         remaining_time = countdown_seconds - int(time.time() - start_time)
                         if remaining_time < 0:
                             break
 
-                        # Alternating colors for blinking effect
                         for color_pair in [2, 3]:
                             timer_window.clear()
-                            timer_window.addstr(0, 7, f"Zeit übrig: {remaining_time} Sekunden",
-                                                curses.color_pair(color_pair))
+                            timer_window.addstr(0, 7, f"Zeit übrig: {remaining_time} Sekunden", curses.color_pair(color_pair))
                             timer_window.refresh()
-                            time.sleep(0.5)  # Adjust to create a blinking effect
+                            time.sleep(0.5)
 
-                        # Beep sound in the last 10 seconds
                         if remaining_time <= 10 and play_countdown_sound:
                             pygame.mixer.Sound.play(countdown_sound)
-                            play_countdown_sound = False  # Set to False, um den Sound nur einmal abzuspielen
+                            play_countdown_sound = False
 
-                        # Check if a winner has been declared during the countdown
                         with lock:
                             if shared_state['winner']:
                                 break
 
-                    # If a winner was declared, break out of the loop
                     with lock:
                         if shared_state['winner']:
                             break
 
-                    # Wait for player responses with a timeout
-                    end_time = time.time() + 2  # Allow additional time for player responses
+                    end_time = time.time() + 2
                     while time.time() < end_time:
                         with lock:
                             if all(shared_state[f"player_{i}_marked"] for i in range(num_players)):
                                 break
                         time.sleep(0.1)
 
-                    # Reset the marked status for the next round
                     with lock:
                         for i in range(num_players):
                             shared_state[f"player_{i}_marked"] = False
 
                     time.sleep(2)
 
-                window.addstr(4, 0, f"{player_names[shared_state['winner'] - 1]} hat gewonnen!", curses.color_pair(1))
+                winner_id = shared_state['winner']
+                for conn in connections:
+                    conn.sendall(b'WIN')
+
+                window.addstr(4, 0, f"{player_names[winner_id - 1]} hat gewonnen!", curses.color_pair(1))
                 window.refresh()
                 time.sleep(5)
 
@@ -286,7 +290,7 @@ def main():
     shared_state = manager.dict()
     shared_state['drawn_word'] = ''
     shared_state['winner'] = 0
-    shared_state['scores'] = manager.list([0] * num_players)  # Initialize scores
+    shared_state['scores'] = manager.list([0] * num_players)
 
     lock = Lock()
 
@@ -295,9 +299,7 @@ def main():
 
     players = []
 
-    master_process_instance = Process(target=master_process,
-                                      args=(
-                                          num_players, words, shared_state, server_ip, server_port, lock, player_names))
+    master_process_instance = Process(target=master_process, args=(num_players, words, shared_state, server_ip, server_port, lock, player_names))
     master_process_instance.start()
 
     for i in range(num_players):
@@ -312,7 +314,6 @@ def main():
 
     for player in players:
         player.terminate()
-
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
