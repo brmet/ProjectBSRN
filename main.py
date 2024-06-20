@@ -233,10 +233,9 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
                                   curses.color_pair(1))
                     log_event(log_file, f"Runde {round_count}: Das gezogene Wort lautet: {drawn_word}")
 
-                    window.addstr(2, 0, "Anzahl der gefundenen Wörter:")
-                    for i in range(num_players):
-                        window.addstr(3 + i, 0, f"{player_names[i]}: {shared_state['scores'][i]} Punkte",
-                                      curses.color_pair(1))
+                    #window.addstr(2, 0, "Anzahl der gefundenen Wörter:")
+                    #for i in range(num_players):
+                       # window.addstr(3 + i, 0, f"{player_names[i]}: {shared_state['scores'][i]} Punkte",curses.color_pair(1))
                     window.refresh()
 
                     for conn in connections:
