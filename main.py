@@ -7,6 +7,7 @@ import subprocess
 from multiprocessing import Process, Manager, Lock
 import os
 import pygame
+from datetime import datetime
 
 # Initialize pygame mixer for sound effects
 pygame.mixer.init()
@@ -82,7 +83,15 @@ def get_input(window, prompt, y=0, x=0):
     return input_str
 
 
+def log_event(log_file, event):
+    with open(log_file, 'a') as f:
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        f.write(f"{timestamp} {event}\n")
+
+
 def player_process(player_id, num_players, card_size, words, player_name, server_ip, server_port):
+    log_file = f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}-bingo-Spieler{player_id + 1}.txt"
+
     def main(stdscr):
         curses.start_color()
         curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
@@ -95,6 +104,9 @@ def player_process(player_id, num_players, card_size, words, player_name, server
         window.clear()
         window.addstr(0, 0, f"{player_name}'s Karte:", curses.color_pair(1))
         display_bingo_card(window, card, 2, 0, card_size)
+
+        log_event(log_file, "Start des Spiels")
+        log_event(log_file, f"Größe des Spielfelds: ({card_size}x{card_size})")
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
@@ -115,14 +127,17 @@ def player_process(player_id, num_players, card_size, words, player_name, server
                         window.addstr(card_size * 2 + 5, 0, f"{player_name} hat gewonnen!", curses.color_pair(1))
                         window.refresh()
                         pygame.mixer.Sound.play(winning_sound)
+                        log_event(log_file, "Sieg")
                         time.sleep(5)
+                        log_event(log_file, "Ende des Spiels")
                         return
                     window.clear()
                     window.addstr(0, 0, f"{player_name}'s Karte: ", curses.color_pair(4))
                     display_bingo_card(window, card, 2, 0, card_size, cursor_y, cursor_x)
                     # Position the question below the Bingo card
                     question_y = 2 + card_size * 2 + 1
-                    window.addstr(question_y, 0, f"Haben Sie das Wort {drawn_word} auf der Karte?", curses.color_pair(1))
+                    window.addstr(question_y, 0, f"Haben Sie das Wort {drawn_word} auf der Karte?",
+                                  curses.color_pair(1))
                 except BlockingIOError:
                     pass
 
@@ -139,13 +154,16 @@ def player_process(player_id, num_players, card_size, words, player_name, server
                     if check_word_on_card(card, drawn_word) and card[cursor_y][cursor_x] == drawn_word:
                         mark_word_on_card(card, cursor_y, cursor_x)
                         pygame.mixer.Sound.play(achievement_sound)
+                        log_event(log_file, f"{drawn_word} ({cursor_x},{cursor_y})")
                         s.sendall(b'SCORED')
                         if check_winner(card, card_size):
                             s.sendall(b'WIN')
                             pygame.mixer.Sound.play(winning_sound)
                             window.addstr(card_size * 2 + 5, 0, f"{player_name} hat gewonnen!", curses.color_pair(1))
                             window.refresh()
+                            log_event(log_file, "Sieg")
                             time.sleep(5)
+                            log_event(log_file, "Ende des Spiels")
                             return
                 display_bingo_card(window, card, 2, 0, card_size, cursor_y, cursor_x)
 
@@ -174,7 +192,10 @@ def handle_player_connection(conn, addr, shared_state, num_players, lock, player
                 shared_state['winner'] = player_id + 1
                 break
 
+
 def master_process(num_players, words, shared_state, server_ip, server_port, lock, player_names):
+    log_file = f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}-bingo-Master.txt"
+
     def main(stdscr):
         curses.start_color()
         curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
@@ -184,6 +205,8 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
         window = stdscr
         window.clear()
         window.addstr(0, 0, "Master Terminal: Buzzword Bingo Game")
+
+        log_event(log_file, "Start des Spiels")
 
         max_y, max_x = stdscr.getmaxyx()
         timer_window = curses.newwin(3, 30, 0, max_x - 30)
@@ -206,11 +229,14 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
                         shared_state['drawn_word'] = drawn_word
 
                     window.clear()
-                    window.addstr(0, 0, f"Runde {round_count}: Das gezogene Wort lautet: {drawn_word}", curses.color_pair(1))
+                    window.addstr(0, 0, f"Runde {round_count}: Das gezogene Wort lautet: {drawn_word}",
+                                  curses.color_pair(1))
+                    log_event(log_file, f"Runde {round_count}: Das gezogene Wort lautet: {drawn_word}")
 
                     window.addstr(2, 0, "Anzahl der gefundenen Wörter:")
                     for i in range(num_players):
-                        window.addstr(3 + i, 0, f"{player_names[i]}: {shared_state['scores'][i]} Punkte", curses.color_pair(1))
+                        window.addstr(3 + i, 0, f"{player_names[i]}: {shared_state['scores'][i]} Punkte",
+                                      curses.color_pair(1))
                     window.refresh()
 
                     for conn in connections:
@@ -227,7 +253,8 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
 
                         for color_pair in [2, 3]:
                             timer_window.clear()
-                            timer_window.addstr(0, 7, f"Zeit übrig: {remaining_time} Sekunden", curses.color_pair(color_pair))
+                            timer_window.addstr(0, 7, f"Zeit übrig: {remaining_time} Sekunden",
+                                                curses.color_pair(color_pair))
                             timer_window.refresh()
                             time.sleep(0.5)
 
@@ -262,11 +289,14 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
 
                 window.addstr(4, 0, f"{player_names[winner_id - 1]} hat gewonnen!", curses.color_pair(1))
                 window.refresh()
+                log_event(log_file, f"{player_names[winner_id - 1]} hat gewonnen!")
+                log_event(log_file, "Ende des Spiels")
                 time.sleep(5)
 
         except KeyboardInterrupt:
             window.addstr(4, 0, "Das Spiel wurde vom Benutzer abgebrochen.", curses.color_pair(1))
             window.refresh()
+            log_event(log_file, "Abbruch")
             time.sleep(2)
 
     curses.wrapper(main)
@@ -299,7 +329,8 @@ def main():
 
     players = []
 
-    master_process_instance = Process(target=master_process, args=(num_players, words, shared_state, server_ip, server_port, lock, player_names))
+    master_process_instance = Process(target=master_process, args=(
+    num_players, words, shared_state, server_ip, server_port, lock, player_names))
     master_process_instance.start()
 
     for i in range(num_players):
@@ -314,6 +345,7 @@ def main():
 
     for player in players:
         player.terminate()
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
