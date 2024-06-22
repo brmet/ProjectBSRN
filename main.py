@@ -128,7 +128,7 @@ def player_process(player_id, num_players, card_size, words, player_name, server
                         window.refresh()
                         pygame.mixer.Sound.play(winning_sound)
                         log_event(log_file, "Sieg")
-                        time.sleep(5)
+                        time.sleep(300)  # Wait for 5 minutes
                         log_event(log_file, "Ende des Spiels")
                         return
                     window.clear()
@@ -155,14 +155,13 @@ def player_process(player_id, num_players, card_size, words, player_name, server
                         mark_word_on_card(card, cursor_y, cursor_x)
                         pygame.mixer.Sound.play(achievement_sound)
                         log_event(log_file, f"{drawn_word} ({cursor_x},{cursor_y})")
-                        s.sendall(b'SCORED')
                         if check_winner(card, card_size):
                             s.sendall(b'WIN')
                             pygame.mixer.Sound.play(winning_sound)
                             window.addstr(card_size * 2 + 5, 0, f"{player_name} hat gewonnen!", curses.color_pair(1))
                             window.refresh()
                             log_event(log_file, "Sieg")
-                            time.sleep(5)
+                            time.sleep(300)  # Wait for 5 minutes
                             log_event(log_file, "Ende des Spiels")
                             return
                 display_bingo_card(window, card, 2, 0, card_size, cursor_y, cursor_x)
@@ -185,9 +184,6 @@ def handle_player_connection(conn, addr, shared_state, num_players, lock, player
             break
 
         with lock:
-            if player_response == 'SCORED':
-                shared_state['scores'][player_id] += 1
-                shared_state[f"player_{player_id}_marked"] = True
             if player_response == 'WIN':
                 shared_state['winner'] = player_id + 1
                 break
@@ -218,11 +214,26 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((server_ip, server_port))
                 s.listen(num_players)
-                connections = [s.accept()[0] for _ in range(num_players)]
+                s.setblocking(False)
+                connections = []
 
-                while not shared_state['winner']:
+                while len(connections) < num_players:
+                    try:
+                        conn, addr = s.accept()
+                        connections.append(conn)
+                        Process(target=handle_player_connection, args=(conn, addr, shared_state, num_players, lock, player_names)).start()
+                    except BlockingIOError:
+                        pass
+
+                while True:
+                    with lock:
+                        if shared_state['winner']:
+                            break
+
                     round_count += 1
-                    drawn_word = random.choice([w for w in words if w not in drawn_words])
+                    drawn_word = random.choice(words)
+                    while drawn_word in drawn_words:
+                        drawn_word = random.choice(words)
                     drawn_words.add(drawn_word)
 
                     with lock:
@@ -233,9 +244,6 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
                                   curses.color_pair(1))
                     log_event(log_file, f"Runde {round_count}: Das gezogene Wort lautet: {drawn_word}")
 
-                    #window.addstr(2, 0, "Anzahl der gefundenen Wörter:")
-                    #for i in range(num_players):
-                       # window.addstr(3 + i, 0, f"{player_names[i]}: {shared_state['scores'][i]} Punkte",curses.color_pair(1))
                     window.refresh()
 
                     for conn in connections:
@@ -271,14 +279,7 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
 
                     end_time = time.time() + 2
                     while time.time() < end_time:
-                        with lock:
-                            if all(shared_state[f"player_{i}_marked"] for i in range(num_players)):
-                                break
                         time.sleep(0.1)
-
-                    with lock:
-                        for i in range(num_players):
-                            shared_state[f"player_{i}_marked"] = False
 
                     time.sleep(2)
 
@@ -290,7 +291,7 @@ def master_process(num_players, words, shared_state, server_ip, server_port, loc
                 window.refresh()
                 log_event(log_file, f"{player_names[winner_id - 1]} hat gewonnen!")
                 log_event(log_file, "Ende des Spiels")
-                time.sleep(5)
+                time.sleep(300)  # Wait for 5 minutes
 
         except KeyboardInterrupt:
             window.addstr(4, 0, "Das Spiel wurde vom Benutzer abgebrochen.", curses.color_pair(1))
@@ -319,7 +320,6 @@ def main():
     shared_state = manager.dict()
     shared_state['drawn_word'] = ''
     shared_state['winner'] = 0
-    shared_state['scores'] = manager.list([0] * num_players)
 
     lock = Lock()
 
