@@ -1,4 +1,4 @@
-import curses
+import curses #
 import random
 import time
 import socket
@@ -190,48 +190,52 @@ def handle_player_connection(conn, addr, shared_state, num_players, lock, player
 
 
 def master_process(num_players, words, shared_state, server_ip, server_port, lock, player_names):
+    #Erstellt einen Dateinamen für das Spielprotokoll
     log_file = f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}-bingo-Master.txt"
 
     def main(stdscr):
+        #Initialisiert die Farben dür die Terminalausgabe
         curses.start_color()
-        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLUE)
-        curses.init_pair(3, curses.COLOR_RED, curses.COLOR_BLUE)
+        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK) #Grüne Schrift
+        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLUE) #Weißer Text auf blauem Hintergrund
+        curses.init_pair(3, curses.COLOR_RED, curses.COLOR_BLUE) #Roter Text auf blauem Hintergrund
 
         window = stdscr
         window.clear()
-        window.addstr(0, 0, "Master Terminal: Buzzword Bingo Game")
+        window.addstr(0, 0, "Master Terminal: Buzzword Bingo Game") #Ausgabe der Spielinformationen
 
-        log_event(log_file, "Start des Spiels")
+        log_event(log_file, "Start des Spiels") #Protokolliert den Spielstart
 
         max_y, max_x = stdscr.getmaxyx()
-        timer_window = curses.newwin(3, 30, 0, max_x - 30)
+        timer_window = curses.newwin(3, 30, 0, max_x - 30) #Erstellt ein neues Fenster für den Timer
 
-        round_count = 0
-        drawn_words = set()
+        round_count = 0 #Zählt die SPielrunden
+        drawn_words = set() #Set für bereits gezogene Wörter
 
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind((server_ip, server_port))
-                s.listen(num_players)
-                s.setblocking(False)
+                s.bind((server_ip, server_port)) #Bindet den Socket an die IP-Adresse und den Port
+                s.listen(num_players) #Lauscht auf Verbindungen der Spieler
+                s.setblocking(False) #Setzt den Socket auf nicht-blockierend
                 connections = []
 
+                #Wartet bis alle Spieler verbunden sind
                 while len(connections) < num_players:
                     try:
-                        conn, addr = s.accept()
-                        connections.append(conn)
+                        conn, addr = s.accept() #Akpzeptiert eine Verbindung von einem Spieler
+                        connections.append(conn) #Fügt die Verbindung zur Liste hinzu
                         Process(target=handle_player_connection, args=(conn, addr, shared_state, num_players, lock, player_names)).start()
                     except BlockingIOError:
                         pass
 
+                #Hauptschleife für das Spiel
                 while True:
                     with lock:
-                        if shared_state['winner']:
+                        if shared_state['winner']: #Prüft, ob ein Spieler gewonnen hat
                             break
 
-                    round_count += 1
-                    drawn_word = random.choice(words)
+                    round_count += 1 #Erhöht die Rundenzahl
+                    drawn_word = random.choice(words) #Zieht zufällig ein Wort aus der Liste
                     while drawn_word in drawn_words:
                         drawn_word = random.choice(words)
                     drawn_words.add(drawn_word)
